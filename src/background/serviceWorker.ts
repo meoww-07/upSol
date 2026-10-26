@@ -1,6 +1,6 @@
 import { explainDiff } from "../lib/ai";
-import { scrapeProblemStatement } from "../lib/codeforces";
 import { extractLogicFingerprint, extractStyleFingerprint } from "../lib/fingerprint";
+import { languageFamily } from "../lib/language";
 import { hybridSearch } from "../lib/matcher";
 import type {
   AcceptedSubmission,
@@ -62,18 +62,6 @@ type StoredAnalysisState = {
 };
 
 const ANALYSIS_STATE_KEY = "upsol.latestAnalysis";
-
-function languageFamily(language: string) {
-  const value = language.toLowerCase();
-  if (value.includes("c++") || value.includes("gcc") || value.includes("clang")) return "cpp";
-  if (value.includes("python") || value.includes("pypy")) return "python";
-  if (value.includes("java")) return "java";
-  if (value.includes("kotlin")) return "kotlin";
-  if (value.includes("rust")) return "rust";
-  if (value.includes("go")) return "go";
-  if (value.includes("c#")) return "csharp";
-  return value.split(/\s+/)[0] || "unknown";
-}
 
 async function queryActiveTab() {
   // A JavaScript Promise is exactly that buzzer. It's an object standing in for a result that will arrive later, and it's always in one of those three states.
@@ -155,13 +143,22 @@ async function saveAnalysisState(state: Omit<StoredAnalysisState, "updatedAt">) 
   });
 }
 
-async function getProblemStatement(failed: FailedSubmission): Promise<ProblemStatement> {
+async function getProblemStatement(tabId: number, failed: FailedSubmission): Promise<ProblemStatement> {
+  // Service workers have no DOMParser, so the content script on the current Codeforces tab
+  // fetches and parses the problem page. Only if that fails do we open a temporary tab.
   try {
-    return await scrapeProblemStatement(failed.contestId, failed.problemIndex);
-  } catch {
-    const problemUrl = `https://codeforces.com/problemset/problem/${failed.contestId}/${failed.problemIndex}`;
-    return scrapeTemporaryTab<ProblemStatement>(problemUrl, { type: "SCRAPE_PROBLEM_STATEMENT" });
+    const fetched = await sendToTab<ProblemStatement | null>(tabId, {
+      type: "FETCH_PROBLEM_STATEMENT",
+      contestId: failed.contestId,
+      problemIndex: failed.problemIndex,
+    });
+    if (fetched?.rawText) return fetched;
+  } catch (error) {
+    console.warn(error);
   }
+
+  const problemUrl = `https://codeforces.com/problemset/problem/${failed.contestId}/${failed.problemIndex}`;
+  return scrapeTemporaryTab<ProblemStatement>(problemUrl, { type: "SCRAPE_PROBLEM_STATEMENT" });
 }
 
 async function getAcceptedMeta(failed: FailedSubmission) {
@@ -410,7 +407,7 @@ async function analyzeCurrentTab(settings: AISettings): Promise<AnalysisResult> 
   const problemStatement =
     problemContext?.problemStatement?.rawText || problemContext?.problemStatement?.statement
       ? problemContext.problemStatement
-      : await getProblemStatement(failedSubmission);
+      : await getProblemStatement(tabId, failedSubmission);
   let acceptedSubmissions: AcceptedSubmission[] = [];
   try {
     acceptedSubmissions = await getAcceptedSources(failedSubmission);

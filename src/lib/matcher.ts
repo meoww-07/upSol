@@ -1,7 +1,8 @@
 import { tokenizeCode } from "./fingerprint";
+import { languageFamily } from "./language";
 import type { AcceptedSubmission, FailedSubmission, LogicFingerprint, MatchedSubmission, StyleFingerprint } from "./types";
 
-function overlapScore(a: string[], b: string[]) {
+export function overlapScore(a: string[], b: string[]) {
   const left = new Set(a);
   const right = new Set(b);
   const union = new Set([...left, ...right]);
@@ -29,7 +30,8 @@ export function scoreByTokenSimilarity(userCode: string, candidateCode: string) 
 }
 
 export function scoreByStyleSimilarity(user: StyleFingerprint, candidate: StyleFingerprint) {
-  const language = user.language === candidate.language ? 1 : 0;
+  // Compare language families, not raw labels: "GNU C++17" and "GNU C++20" are the same style.
+  const language = languageFamily(user.language) === languageFamily(candidate.language) ? 1 : 0;
   const loop = user.loopType === candidate.loopType ? 1 : 0;
   const naming = user.namingConvention === candidate.namingConvention ? 1 : 0;
   const recursion = user.usesRecursion === candidate.usesRecursion ? 1 : 0;
@@ -41,11 +43,11 @@ export function scoreByStyleSimilarity(user: StyleFingerprint, candidate: StyleF
   return language * 0.18 + loop * 0.15 + naming * 0.12 + recursion * 0.1 + verbosity * 0.12 + stl * 0.2 + lineSimilarity * 0.13;
 }
 
+const MIN_LOGIC_SCORE = 0.08;
+
 export function filterByLogic(user: LogicFingerprint, candidates: AcceptedSubmission[]) {
-  return candidates.filter((candidate) => {
-    const score = scoreByLogicalSimilarity(user, candidate.logicFingerprint);
-    return score >= 0.08 || candidates.length <= 5;
-  });
+  if (candidates.length <= 5) return candidates;
+  return candidates.filter((candidate) => scoreByLogicalSimilarity(user, candidate.logicFingerprint) >= MIN_LOGIC_SCORE);
 }
 
 export function hybridSearch(
@@ -77,10 +79,4 @@ export function hybridSearch(
       };
     })
     .sort((a, b) => b.totalScore - a.totalScore);
-}
-
-export function buildBM25Index() {
-  return {
-    note: "BM25 is planned for the later-stage search pipeline. MVP uses token overlap.",
-  };
 }

@@ -1,6 +1,29 @@
 import { buildDebugPrompt } from "./promptBuilder";
 import type { AIExplanation, AISettings, FailedSubmission, MatchedSubmission, ProblemStatement } from "./types";
 
+export const REQUEST_TIMEOUT_MS = 90_000;
+
+function isAbortError(error: unknown) {
+  return typeof error === "object" && error !== null && (error as { name?: string }).name === "AbortError";
+}
+
+// fetch() with a deadline so a stalled provider cannot leave the popup spinning forever.
+async function fetchWithTimeout(input: string, init: RequestInit, label: string, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new Error(`${label} request timed out after ${Math.round(timeoutMs / 1000)}s. Try again or switch to a faster model.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function parseExplanation(text: string): AIExplanation {
   const jsonText = text.match(/\{[\s\S]*\}/)?.[0] ?? text;
 
@@ -81,7 +104,7 @@ export async function explainDiff(
       throw new Error(providerConfig.missingKeyMessage);
     }
 
-    const response = await fetch(providerConfig.endpoint, {
+    const response = await fetchWithTimeout(providerConfig.endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -92,7 +115,7 @@ export async function explainDiff(
         messages: [{ role: "user", content: prompt }],
         temperature: 0.2,
       }),
-    });
+    }, providerConfig.label);
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
@@ -110,7 +133,7 @@ export async function explainDiff(
     }
 
     const model = settings.model || "gemini-2.5-flash-lite";
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
       {
         method: "POST",
@@ -127,11 +150,17 @@ export async function explainDiff(
             responseMimeType: "application/json",
           },
         }),
-      }
+      },
+      "Gemini"
     );
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
+      if (response.status === 503) {
+        throw new Error(
+          "Gemini is temporarily overloaded. Your API key was accepted, but the model is experiencing high demand. Try again later or switch to another model/provider."
+        );
+      }
       throw new Error(`Gemini request failed: ${response.status}${body ? ` - ${body.slice(0, 180)}` : ""}`);
     }
 
@@ -150,7 +179,7 @@ export async function explainDiff(
       throw new Error("Claude API key is missing.");
     }
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    const response = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -163,7 +192,7 @@ export async function explainDiff(
         temperature: 0.2,
         messages: [{ role: "user", content: prompt }],
       }),
-    });
+    }, "Claude");
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
@@ -182,7 +211,7 @@ export async function explainDiff(
   let response: Response;
 
   try {
-    response = await fetch(settings.ollamaUrl || "http://localhost:11434/api/generate", {
+    response = await fetchWithTimeout(settings.ollamaUrl || "http://localhost:11434/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -193,8 +222,9 @@ export async function explainDiff(
           temperature: 0.2,
         },
       }),
-    });
-  } catch {
+    }, "Ollama");
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("timed out")) throw error;
     throw new Error(
       "Could not connect to Ollama. Start Ollama and run: ollama run qwen2.5-coder:7b"
     );
