@@ -83,6 +83,7 @@ To update upSol later:
 ## AI Provider Setup
 
 Open upSol, go to **AI Settings**, choose a provider, then paste the API key for that provider.
+upSol saves your provider, model, API key, and Ollama URL in Chrome local extension storage, so you only need to set them up once on the same browser profile.
 
 ```mermaid
 flowchart TD

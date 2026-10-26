@@ -47,6 +47,23 @@ function languageFromText(text: string) {
   );
 }
 
+function languageFromCode(code: string) {
+  if (!code.trim()) return "Unknown language";
+  if (/#include\s*<bits\/stdc\+\+\.h>|using\s+namespace\s+std|std::|vector\s*<|long\s+long/.test(code)) return "C++";
+  if (/^\s*import\s+java\.|public\s+class\s+\w+|static\s+void\s+main\s*\(\s*String\[\]/m.test(code)) return "Java";
+  if (/^\s*from\s+\w+\s+import\s+|^\s*import\s+\w+|def\s+\w+\s*\(|print\s*\(/m.test(code) && !/[{}];/.test(code)) return "Python";
+  if (/fun\s+main\s*\(|val\s+\w+\s*=|var\s+\w+\s*=|readLine\s*\(/.test(code)) return "Kotlin";
+  if (/package\s+main|func\s+main\s*\(|fmt\./.test(code)) return "Go";
+  if (/fn\s+main\s*\(|let\s+mut\s+|use\s+std::/.test(code)) return "Rust";
+  if (/using\s+System|namespace\s+\w+|Console\.(WriteLine|ReadLine)/.test(code)) return "C#";
+  if (/#include\s*<|scanf\s*\(|printf\s*\(/.test(code)) return "C";
+  return "Unknown language";
+}
+
+function bestLanguage(...values: string[]) {
+  return values.find((value) => value && value !== "Unknown language") ?? "Unknown language";
+}
+
 function extractProblemRef() {
   const urlMatch =
     window.location.href.match(/\/(?:contest|problemset)\/(\d+)\/problem\/([A-Z0-9]+)/i) ??
@@ -126,6 +143,9 @@ function scrapeFailedCode(): FailedSubmission {
     row.textContent?.includes(submissionMatch?.[2] ?? "")
   );
   const verdictMatch = text.match(/Wrong answer(?:\s+on\s+test\s+\d+)?|WRONG_ANSWER|Accepted|Runtime error|Time limit exceeded/i);
+  const rowLanguage = languageFromRow(currentRow ?? null);
+  const textLanguage = languageFromText(text);
+  const codeLanguage = languageFromCode(code);
 
   return {
     //style - best-effort, keep going attitude from service worker 
@@ -134,10 +154,7 @@ function scrapeFailedCode(): FailedSubmission {
     problemIndex: problemMatch?.[2] ?? "",
     submissionId: submissionMatch?.[2] ?? "",
     verdict: verdictMatch?.[0] ?? "Unknown verdict",
-    language:
-      languageFromRow(currentRow ?? null) !== "Unknown language"
-        ? languageFromRow(currentRow ?? null)
-        : languageFromText(text),
+    language: bestLanguage(rowLanguage, textLanguage, codeLanguage),
     code,
   };
 }
@@ -179,11 +196,13 @@ function scrapeCurrentSubmissionSource(): SourceResult {
   const submissionMatch = url.match(/\/submission\/(\d+)/i);
   const row = document.querySelector("table.status-frame-datatable tr");
   const tableLanguage = languageFromRow(row ?? null);
+  const textLanguage = languageFromText(text);
+  const codeLanguage = languageFromCode(code);
 
   return {
     submissionId: submissionMatch?.[1] ?? "",
     userHandle: document.querySelector<HTMLAnchorElement>("a[href*='/profile/']")?.textContent?.trim() ?? "unknown",
-    language: tableLanguage !== "Unknown language" ? tableLanguage : languageFromText(text),
+    language: bestLanguage(tableLanguage, textLanguage, codeLanguage),
     code,
     codeLength: code.length,
     sourceUrl: url,

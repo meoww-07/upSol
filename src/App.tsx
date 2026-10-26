@@ -43,6 +43,7 @@ const pipelineSteps = [
 ];
 
 const ANALYSIS_STATE_KEY = "upsol.latestAnalysis";
+const SETTINGS_STORAGE_KEY = "upsol.aiSettings";
 const hasChromeRuntime = () => typeof chrome !== "undefined" && Boolean(chrome.runtime?.sendMessage);
 const hasChromeStorage = () => typeof chrome !== "undefined" && Boolean(chrome.storage?.local);
 
@@ -74,6 +75,8 @@ type StoredAnalysisState = {
   updatedAt: number;
 };
 
+type StoredSettings = Partial<AISettings>;
+
 export function App() {
   const [settings, setSettings] = useState<AISettings>(defaultSettings);
   const [result, setResult] = useState<AnalysisResult | null>(null);
@@ -81,13 +84,31 @@ export function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   useEffect(() => {
-    if (!hasChromeStorage()) return;
+    if (!hasChromeStorage()) {
+      setSettingsLoaded(true);
+      return;
+    }
 
     chrome.storage.local
-      .get<Record<string, StoredAnalysisState | undefined>>(ANALYSIS_STATE_KEY)
+      .get<{
+        [ANALYSIS_STATE_KEY]?: StoredAnalysisState;
+        [SETTINGS_STORAGE_KEY]?: StoredSettings;
+      }>([ANALYSIS_STATE_KEY, SETTINGS_STORAGE_KEY])
       .then((stored) => {
+        const storedSettings = stored[SETTINGS_STORAGE_KEY];
+        if (storedSettings) {
+          setSettings({
+            ...defaultSettings,
+            ...storedSettings,
+            provider: storedSettings.provider ?? defaultSettings.provider,
+            model: storedSettings.model ?? providerDefaultModels[storedSettings.provider ?? defaultSettings.provider],
+            ollamaUrl: storedSettings.ollamaUrl ?? defaultSettings.ollamaUrl,
+          });
+        }
+
         const state = stored[ANALYSIS_STATE_KEY];
         if (!state) return;
         if (state.status === "complete" && state.result) {
@@ -100,8 +121,14 @@ export function App() {
           setStatusMessage("Analysis stopped before the pipeline could finish.");
         }
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => setSettingsLoaded(true));
   }, []);
+
+  useEffect(() => {
+    if (!settingsLoaded || !hasChromeStorage()) return;
+    chrome.storage.local.set({ [SETTINGS_STORAGE_KEY]: settings }).catch(() => undefined);
+  }, [settings, settingsLoaded]);
 
   const failedLogic = useMemo(
     () => (result?.failedSubmission.code ? extractLogicFingerprint(result.failedSubmission.code) : null),
@@ -515,7 +542,7 @@ function SubmissionSummary({ failed }: { failed: FailedSubmission }) {
         <div className="sm-verdict-value">{failed.verdict}</div>
       </div>
       <dl className="sm-meta-grid">
-        <div className="sm-meta-item"><dt className="sm-label">Language</dt><dd className="sm-meta-value">{failed.language}</dd></div>
+        <div className="sm-meta-item"><dt className="sm-label">Language</dt><dd className="sm-meta-value">{failed.language === "Unknown language" ? "Detected from code" : failed.language}</dd></div>
         <div className="sm-meta-item"><dt className="sm-label">Contest</dt><dd className="sm-meta-value">{failed.contestId}</dd></div>
         <div className="sm-meta-item"><dt className="sm-label">Problem</dt><dd className="sm-meta-value">{failed.problemIndex}</dd></div>
         <div className="sm-meta-item"><dt className="sm-label">Submission</dt><dd className="sm-meta-value">{failed.submissionId}</dd></div>

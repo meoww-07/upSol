@@ -132,6 +132,11 @@ export async function explainDiff(
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
+      if (response.status === 503) {
+        throw new Error(
+          "Gemini is temporarily overloaded. Your API key was accepted, but the model is experiencing high demand. Try again later or switch to another model/provider."
+        );
+      }
       throw new Error(`Gemini request failed: ${response.status}${body ? ` - ${body.slice(0, 180)}` : ""}`);
     }
 
