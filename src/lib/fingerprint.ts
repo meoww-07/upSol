@@ -38,10 +38,10 @@ export function extractLogicFingerprint(code: string): LogicFingerprint {
   if (/%|\/\s*10|\bmod\b/.test(lower)) approachTags.push("modular/digit logic");
 
   if (/\b(vector|array|vi|vll|vvi|vl|vc)\b|\[[^\]]+\]/.test(lower)) dataStructures.push("array/vector");
-  if (/map|unordered_map/.test(lower)) dataStructures.push("map/hash map");
+  if (/\b(?:unordered_)?map\b/.test(lower)) dataStructures.push("map/hash map");
   if (/\bset\b|unordered_set/.test(lower)) dataStructures.push("set/hash set");
-  if (/queue|deque/.test(lower)) dataStructures.push("queue/deque");
-  if (/stack/.test(lower)) dataStructures.push("stack");
+  if (/\b(?:queue|deque)\b/.test(lower)) dataStructures.push("queue/deque");
+  if (/\bstack\b/.test(lower)) dataStructures.push("stack");
   if (/priority_queue/.test(lower)) dataStructures.push("priority queue");
   if (/pair\s*</.test(lower)) dataStructures.push("pair");
   if (/\bstring\b|\bchar\s+\w+\s*\[/.test(lower)) dataStructures.push("string/char buffer");
@@ -62,8 +62,9 @@ export function extractLogicFingerprint(code: string): LogicFingerprint {
   conditionPatterns.push(...conditions.slice(0, 8).map((value) => value.replace(/\s+/g, " ")));
 
   if (/<=|>=|==|!=/.test(code)) edgeCaseSignals.push("equality/boundary checks");
-  if (/\b0\b|\b1\b/.test(code)) edgeCaseSignals.push("zero/one case handling");
-  if (/long long|int64|ll\b/.test(code)) edgeCaseSignals.push("large number handling");
+  // Only count 0/1 when it is compared against, otherwise every `i = 0` loop would match.
+  if (/(?:==|!=|<=|>=|<|>)\s*[01]\b/.test(code)) edgeCaseSignals.push("zero/one case handling");
+  if (/long long|int64|\bll\b|\bi64\b/.test(code)) edgeCaseSignals.push("large number handling");
   if (/t\s*;|while\s*\(\s*t--\s*\)|for\s*\([^;]*(tc|test)/i.test(code)) edgeCaseSignals.push("multiple test cases");
   if (/n\s*==\s*1|n\s*<=\s*1|empty\s*\(/i.test(code)) edgeCaseSignals.push("small input checks");
 

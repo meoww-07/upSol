@@ -1,6 +1,7 @@
-// reading information off a Codeforces page and reporting it back. It never opens tabs or calls AI — it just looks at the page it's living in and answers questions like "what's the failed code here?" or "is this even a page we can analyze?"
-
-
+// Reads information off a Codeforces page and reports it back to the service worker.
+// It never opens tabs or calls AI. It only looks at the page it lives in (or fetches a
+// same-origin page with the user's cookies) and answers questions like "what's the failed
+// code here?" or "is this even a page we can analyze?".
 
 import type { FailedSubmission, ProblemStatement } from "../lib/types";
 
@@ -26,9 +27,15 @@ type ProblemPageContext = {
   viewerHandle: string;
   problemStatement: ProblemStatement;
 };
+type ContentRequest = {
+  type?: string;
+  limit?: number;
+  contestId?: string;
+  problemIndex?: string;
+};
 
 function cleanText(value: string) {
-  return value.replace(/\u00a0/g, " ").replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return value.replace(/ /g, " ").replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function languageFromRow(row: Element | null) {
@@ -111,7 +118,7 @@ function detectWrongAnswerPage(): DetectionResult {
   return { ok: true, reason: "Wrong Answer submission detected." };
 }
 
-//decides if the extension can work on this page
+// Decides if the extension can work on this page.
 function detectAnalyzablePage(): DetectionResult & { pageType?: "submission" | "problem" } {
   const wrongAnswer = detectWrongAnswerPage();
   if (wrongAnswer.ok) return { ...wrongAnswer, pageType: "submission" };
@@ -148,7 +155,7 @@ function scrapeFailedCode(): FailedSubmission {
   const codeLanguage = languageFromCode(code);
 
   return {
-    //style - best-effort, keep going attitude from service worker 
+    // Best-effort: fill what we can and let the service worker decide what is missing.
     url,
     contestId: problemMatch?.[1] ?? submissionMatch?.[1] ?? "",
     problemIndex: problemMatch?.[2] ?? "",
@@ -209,16 +216,17 @@ function scrapeCurrentSubmissionSource(): SourceResult {
   };
 }
 
-function scrapeProblemStatementFromPage(): ProblemStatement {
-  const statement = document.querySelector(".problem-statement");
-  const title = cleanText(statement?.querySelector(".title")?.textContent ?? document.title);
+// Shared parser for a problem page, whether it is the live document or one fetched over the network.
+function parseProblemStatement(root: Document, url: string, fallbackText: string): ProblemStatement {
+  const statement = root.querySelector(".problem-statement");
+  const title = cleanText(statement?.querySelector(".title")?.textContent ?? root.title);
   const inputFormat = cleanText(statement?.querySelector(".input-specification")?.textContent ?? "");
   const outputFormat = cleanText(statement?.querySelector(".output-specification")?.textContent ?? "");
   const examples = Array.from(statement?.querySelectorAll(".sample-tests .input, .sample-tests .output") ?? []).map((node) =>
     cleanText(node.textContent ?? "")
   );
   const notes = cleanText(statement?.querySelector(".note")?.textContent ?? "");
-  const rawText = cleanText(statement?.textContent ?? document.body.innerText);
+  const rawText = cleanText(statement?.textContent ?? fallbackText);
 
   return {
     title,
@@ -228,8 +236,38 @@ function scrapeProblemStatementFromPage(): ProblemStatement {
     examples,
     notes,
     rawText,
-    url: window.location.href,
+    url,
   };
+}
+
+function scrapeProblemStatementFromPage(): ProblemStatement {
+  return parseProblemStatement(document, window.location.href, document.body.innerText);
+}
+
+// The service worker has no DOMParser, so it asks the page to fetch and parse the problem
+// statement. The request is same-origin and carries the user's Codeforces cookies.
+async function fetchProblemStatement(contestId: string, problemIndex: string): Promise<ProblemStatement | null> {
+  if (!contestId || !problemIndex) return null;
+
+  const urls = [
+    `https://codeforces.com/problemset/problem/${contestId}/${problemIndex}`,
+    `https://codeforces.com/contest/${contestId}/problem/${problemIndex}`,
+  ];
+
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, { credentials: "include" });
+      if (!response.ok) continue;
+      const doc = new DOMParser().parseFromString(await response.text(), "text/html");
+      if (!doc.querySelector(".problem-statement")) continue;
+      const parsed = parseProblemStatement(doc, url, "");
+      if (parsed.rawText) return parsed;
+    } catch {
+      // Try the next URL shape; the service worker falls back to a temporary tab if both fail.
+    }
+  }
+
+  return null;
 }
 
 function scrapeProblemPageContext(): ProblemPageContext {
@@ -241,47 +279,40 @@ function scrapeProblemPageContext(): ProblemPageContext {
     problemStatement: scrapeProblemStatementFromPage(),
   };
 }
-//A message listener at the bottom that says "when the service worker asks for X, run the matching helper and send the answer back."
+
+// When the service worker asks for X, run the matching helper and send the answer back.
+// Returning true keeps the channel open for handlers that reply asynchronously.
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  const request = message as { type?: string; limit?: number };
+  const request = message as ContentRequest;
 
-  if (request.type === "PING") {
-    sendResponse({ ok: true, page: window.location.href });
-    return;
-  }
-
-  if (request.type === "DETECT_WRONG_ANSWER_PAGE") {
-    sendResponse(detectWrongAnswerPage());
-    return;
-  }
-
-  if (request.type === "DETECT_ANALYZABLE_PAGE") {
-    sendResponse(detectAnalyzablePage());
-    return;
-  }
-
-  if (request.type === "SCRAPE_FAILED_CODE") {
-    sendResponse(scrapeFailedCode());
-    return;
-  }
-
-  if (request.type === "SCRAPE_PROBLEM_PAGE_CONTEXT") {
-    sendResponse(scrapeProblemPageContext());
-    return;
-  }
-
-  if (request.type === "SCRAPE_ACCEPTED_META") {
-    sendResponse(scrapeAcceptedMeta(request.limit ?? 30));
-    return;
-  }
-
-  if (request.type === "SCRAPE_SUBMISSION_SOURCE") {
-    sendResponse(scrapeCurrentSubmissionSource());
-    return;
-  }
-
-  if (request.type === "SCRAPE_PROBLEM_STATEMENT") {
-    sendResponse(scrapeProblemStatementFromPage());
+  switch (request.type) {
+    case "PING":
+      sendResponse({ ok: true, page: window.location.href });
+      return;
+    case "DETECT_ANALYZABLE_PAGE":
+      sendResponse(detectAnalyzablePage());
+      return;
+    case "SCRAPE_FAILED_CODE":
+      sendResponse(scrapeFailedCode());
+      return;
+    case "SCRAPE_PROBLEM_PAGE_CONTEXT":
+      sendResponse(scrapeProblemPageContext());
+      return;
+    case "SCRAPE_ACCEPTED_META":
+      sendResponse(scrapeAcceptedMeta(request.limit ?? 30));
+      return;
+    case "SCRAPE_SUBMISSION_SOURCE":
+      sendResponse(scrapeCurrentSubmissionSource());
+      return;
+    case "SCRAPE_PROBLEM_STATEMENT":
+      sendResponse(scrapeProblemStatementFromPage());
+      return;
+    case "FETCH_PROBLEM_STATEMENT":
+      fetchProblemStatement(request.contestId ?? "", request.problemIndex ?? "")
+        .then(sendResponse)
+        .catch(() => sendResponse(null));
+      return true;
+    default:
+      return;
   }
 });
-//return true is only needed when you reply later.: no async reply → no return true needed.
