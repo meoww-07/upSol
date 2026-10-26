@@ -44,12 +44,12 @@ Users need to clone or download this repository and load the included `dist` fol
 Get the repository:
 
 ```powershell
-git clone https://github.com/meoww-07/fix.git
+git clone https://github.com/meoww-07/upSol.git
 ```
 
 Or download it from GitHub:
 
-1. Open https://github.com/meoww-07/fix
+1. Open https://github.com/meoww-07/upSol
 2. Click **Code**.
 3. Click **Download ZIP**.
 4. Extract the ZIP file.
@@ -143,6 +143,8 @@ Recommended workflow:
 
 If Codeforces blocks source scraping, open 1-3 accepted submission source pages in tabs first. upSol can use those opened pages as candidates.
 
+Behind the scenes, the problem statement is fetched directly from the Codeforces tab you are on. Accepted source pages are opened briefly as hidden background tabs, because Codeforces answers plain background requests for submission pages with a bot challenge.
+
 ## Project Structure
 
 ```text
@@ -151,13 +153,26 @@ src/
   background/serviceWorker.ts Extension orchestration and Codeforces workflow
   content/contentScript.ts    Codeforces page extraction
   lib/ai.ts                   AI provider calls
-  lib/codeforces.ts           Codeforces parsing helpers
   lib/fingerprint.ts          Logic/style fingerprinting
+  lib/language.ts             Language family detection
+  lib/matcher.ts              Ranking of accepted submissions
   lib/promptBuilder.ts        AI explanation prompt
+  lib/__tests__/              Unit tests (vitest)
 public/
   manifest.json               Chrome extension manifest
 dist/                         Built extension output
 ```
+
+## Development
+
+```bash
+npm install
+npm run typecheck
+npm test
+npm run build
+```
+
+`npm run build` type-checks the project and writes the loadable extension to `dist/`. The `dist` folder is committed so users can load the extension without building it, so rebuild and commit it together with any source change. After rebuilding, click **Reload** on the upSol card in `chrome://extensions`.
 
 ## Notes
 
